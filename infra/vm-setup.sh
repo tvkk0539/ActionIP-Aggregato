@@ -30,9 +30,13 @@ echo "[+] Updating apt packages"
 sudo apt-get update -y
 sudo apt-get upgrade -y
 
-echo "[+] Installing Node.js LTS, git, jq, curl, openssl"
+echo "[+] Installing Node.js LTS, git, jq, curl, openssl, cron"
 curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt-get install -y nodejs git jq curl openssl
+sudo apt-get install -y nodejs git jq curl openssl cron
+
+# Ensure cron service is running
+sudo systemctl enable cron
+sudo systemctl start cron
 
 # =========================
 # Deploy Application Code
