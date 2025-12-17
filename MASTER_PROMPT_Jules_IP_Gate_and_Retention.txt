@@ -1,0 +1,232 @@
+
+MASTER PROMPT — ActionIP Aggregator (GCP) with IP Gate & Retention
+=================================================================
+
+Objective
+---------
+Build or modify a GCP project called **ActionIP Aggregator** to:
+1) **Collect the runner's public IP early** from GitHub Actions and send it to a central collector.
+2) **Decide via a gate** (`POST /gate`) whether the run should proceed based on duplicate IPs observed in a short time window.
+3) **Run or skip** the project's steps accordingly. If skipped, **exit successfully** (status 0).
+4) Enforce **custom data retention**: keep ingested IP records for only **N hours** or **≤ 1 day**, then delete automatically.
+
+Networking context
+------------------
+- GitHub-hosted runners use **NAT/PAT**. Many runners can share the same **public IP** concurrently; websites only see the public IP (not ports).
+- We want to detect **same-time duplicates** of public IPs and optionally **skip** the run.
+
+Deliverables
+------------
+Please generate these artifacts:
+
+A) **Cloud Run service** (Node.js/Express recommended; Python Flask acceptable) exposing:
+   - `POST /ingest` — Input JSON: `{account, repo, run_id, job, ip, ts, country?, asn?}`. Append records to **Cloud Storage** (NDJSON + CSV) and optionally **BigQuery**.
+   - `POST /gate` — Input JSON: `{account, repo, run_id, job, ip, ts, policy?}`. Output JSON:
+     ```json
+     {"should_run": true|false, "duplicates": <int>, "reason": "<string>"}
+     ```
+     Gate logic: count **concurrent duplicates** of the same `ip` within the recent **window** (last `RETENTION_WINDOW_MINUTES`, default 5). If duplicates ≥ threshold (e.g., 1), return `should_run=false` with a reason like `"duplicate_ip_detected"`. If datastore unavailable or any error occurs, **fail‑open** (return `should_run=true`).
+   - `GET /summary` — Return totals, unique IPs, and duplicates for **today**.
+   - `GET /export?format=csv|json&date=YYYY-MM-DD` — Stream CSV/JSON records for the given date.
+   - `POST /cleanup` — Delete data older than **`RETENTION_HOURS`** from **GCS** (and **BigQuery** if used). This route will be called by **Cloud Scheduler**.
+
+B) **Retention customizations** (configurable via env vars):
+   - `RETENTION_HOURS` (integer): e.g., 6 or 24 — delete GCS objects & BigQuery rows older than this many hours.
+   - `RETENTION_WINDOW_MINUTES` (integer): e.g., 5 — gate's short window to detect concurrent duplicates.
+   - `BUCKET_LIFECYCLE_DAYS` (integer): e.g., 1 — set GCS lifecycle to auto‑delete objects older than N days (for day‑level retention).
+
+C) **Deployment script**: `infra/cloud-run-deploy.sh` that:
+   - Builds & deploys to Cloud Run.
+   - Accepts env vars: `COLLECTOR_TOKEN`, `HMAC_SECRET`, `BUCKET_NAME`, `RETENTION_HOURS`, `RETENTION_WINDOW_MINUTES`, `BUCKET_LIFECYCLE_DAYS`.
+   - Optionally configures **GCS lifecycle** when `BUCKET_LIFECYCLE_DAYS > 0`.
+
+D) **Cloud Scheduler** job instructions** for hourly cleanup:**
+   - Create an HTTP job that hits `POST /cleanup` on Cloud Run with header `Authorization: Bearer <COLLECTOR_TOKEN>` every hour.
+
+E) **GitHub Actions workflow YAML** (client side) that:
+   - Collects & sends IP **early**.
+   - Calls **`/gate`** and decides to **abort successfully** or **run** the project.
+   - Uses `continue-on-error: true` + retries so network hiccups never block the project.
+
+F) **README.md** describing:
+   - NAT/PAT behavior (public IP sharing, port translation not visible externally).
+   - Gate policy & window.
+   - Retention model (hour‑level via `/cleanup`, day‑level via GCS lifecycle).
+   - Security (Bearer token, optional HMAC signature, optional allowlisting of GitHub Actions egress IP ranges).
+
+Implementation specifics
+-----------------------
+1) **Auth & integrity**
+   - Require header `Authorization: Bearer <COLLECTOR_TOKEN>` on `/ingest`, `/gate`, `/cleanup`.
+   - Optional `X-Signature` with **HMAC SHA256** over raw JSON using `HMAC_SECRET`; verify on server.
+
+2) **Storage**
+   - **GCS**: write one NDJSON line per record; maintain a daily CSV (`ips/YYYY-MM-DD/ips.csv`).
+   - **BigQuery** (optional): table `ip_observations(account STRING, repo STRING, run_id STRING, job STRING, ip STRING, ts TIMESTAMP, country STRING NULLABLE, asn STRING NULLABLE)`.
+
+3) **Gate logic details**
+   - For the incoming `{ip, ts}`, compute the count of records with same `ip` where `ts` is within `[now − RETENTION_WINDOW_MINUTES, now]`.
+   - If **count ≥ threshold** (e.g., 1) → `should_run=false`.
+   - Else `should_run=true`.
+   - On error → `should_run=true` (fail‑open).
+
+4) **Retention**
+   - **Hour‑level**: Implement `POST /cleanup` that deletes GCS objects and BigQuery rows older than `RETENTION_HOURS`.
+   - **Day‑level**: Configure GCS lifecycle to auto‑delete objects older than `BUCKET_LIFECYCLE_DAYS`.
+   - Provide Cloud Scheduler command to trigger `/cleanup` hourly.
+
+5) **Env vars** (server)
+   ```bash
+   COLLECTOR_TOKEN=...             # required
+   HMAC_SECRET=...                 # optional
+   BUCKET_NAME=...                 # GCS bucket
+   RETENTION_HOURS=24              # keep data for N hours
+   RETENTION_WINDOW_MINUTES=5      # gate window
+   BUCKET_LIFECYCLE_DAYS=1         # GCS lifecycle (day-level)
+   ```
+
+6) **Cloud Run deploy script** (`infra/cloud-run-deploy.sh`)
+   - Build & deploy the container.
+   - Create bucket if needed.
+   - If `BUCKET_LIFECYCLE_DAYS > 0`, set lifecycle JSON to delete after N days.
+
+7) **Cloud Scheduler setup** (hourly cleanup)
+   - Command example:
+     ```bash
+     gcloud scheduler jobs create http ip-collector-cleanup \
+       --schedule="every 1 hours" \
+       --uri="https://<CLOUD_RUN_URL>/cleanup" \
+       --http-method=POST \
+       --headers="Authorization=Bearer ${COLLECTOR_TOKEN}"
+     ```
+
+8) **GitHub Actions workflow** (client) — include this YAML:
+   ```yaml
+   name: Daily Docker Cycle (01:30 PM IST) — with IP Gate
+
+   on:
+     schedule:
+       - cron: "0 8 * * *"
+     workflow_dispatch:
+
+   concurrency:
+     group: daily-docker-${{ github.ref }}
+     cancel-in-progress: false
+
+   jobs:
+     docker-cycle:
+       runs-on: ubuntu-latest
+       timeout-minutes: 290
+
+       env:
+         IP_POLICY: "unique"          # gate policy hint
+         IP_DUP_THRESHOLD: "0"        # local fallback threshold
+
+       steps:
+         # --- Early IP collect & send ---
+         - name: Collect runner public IP (early)
+           id: ip
+           continue-on-error: true
+           run: |
+             echo "JOB_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+             echo "IP=$(curl -s https://api.ipify.org)" >> $GITHUB_ENV
+
+         - name: Send IP to collector
+           continue-on-error: true
+           env:
+             COLLECTOR_URL: ${{ secrets.COLLECTOR_URL }}
+             COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
+             HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+           run: |
+             payload=$(jq -n \
+               --arg account  "${{ github.repository_owner }}" \
+               --arg repo     "${{ github.repository }}" \
+               --arg run_id   "${{ github.run_id }}" \
+               --arg job      "${{ github.job }}" \
+               --arg ip       "${IP:-unknown}" \
+               --arg ts       "${JOB_START}" \
+               '{account:$account,repo:$repo,run_id:$run_id,job:$job,ip:$ip,ts:$ts}')
+             sig=$(printf "%s" "$payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
+             curl -s -X POST "$COLLECTOR_URL/ingest" \
+               -H "Authorization: Bearer $COLLECTOR_TOKEN" \
+               -H "Content-Type: application/json" \
+               -H "X-Signature: $sig" \
+               -d "$payload" || true
+
+         # --- Gate decision ---
+         - name: Ask collector if we should run (gate)
+           id: gate
+           continue-on-error: true
+           env:
+             COLLECTOR_URL: ${{ secrets.COLLECTOR_URL }}
+             COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
+             HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+             IP_POLICY: ${{ env.IP_POLICY }}
+             IP_DUP_THRESHOLD: ${{ env.IP_DUP_THRESHOLD }}
+           run: |
+             gate_payload=$(jq -n \
+               --arg account  "${{ github.repository_owner }}" \
+               --arg repo     "${{ github.repository }}" \
+               --arg run_id   "${{ github.run_id }}" \
+               --arg job      "${{ github.job }}" \
+               --arg ip       "${IP:-unknown}" \
+               --arg ts       "${JOB_START}" \
+               --arg policy   "${IP_POLICY}" \
+               '{account:$account,repo:$repo,run_id:$run_id,job:$job,ip:$ip,ts:$ts,policy:$policy}')
+             gate_sig=$(printf "%s" "$gate_payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
+             resp=$(curl -s -X POST "$COLLECTOR_URL/gate" \
+               -H "Authorization: Bearer $COLLECTOR_TOKEN" \
+               -H "Content-Type: application/json" \
+               -H "X-Signature: $gate_sig" \
+               -d "$gate_payload" || echo '{}')
+             should_run=$(echo "$resp" | jq -r '.should_run // "true"')
+             duplicates=$(echo "$resp" | jq -r '.duplicates // 0')
+             reason=$(echo "$resp" | jq -r '.reason // ""')
+             if [ "$should_run" = "true" ] && [ "$duplicates" -gt "${IP_DUP_THRESHOLD}" ]; then
+               should_run="false"; reason="local-threshold"
+             fi
+             echo "SHOULD_RUN=$should_run" >> $GITHUB_ENV
+             echo "DUPLICATES=$duplicates" >> $GITHUB_ENV
+             echo "GATE_REASON=$reason" >> $GITHUB_ENV
+
+         - name: Abort early due to duplicate IP (successful exit)
+           if: env.SHOULD_RUN != 'true'
+           run: |
+             echo "Duplicate IP detected (duplicates=${DUPLICATES}, reason=${GATE_REASON}). Skipping project run." \
+               >> $GITHUB_STEP_SUMMARY
+             exit 0
+
+         # --- Project steps guarded by gate ---
+         - name: Checkout repo
+           if: env.SHOULD_RUN == 'true'
+           uses: actions/checkout@v4
+
+         - name: Make scripts executable
+           if: env.SHOULD_RUN == 'true'
+           run: |
+             chmod +x script.sh
+             chmod +x one.sh two.sh three.sh
+
+         - name: Run cyclic Docker script
+           if: env.SHOULD_RUN == 'true'
+           run: ./script.sh
+   ```
+
+9) **README.md**
+   - Explain NAT/PAT, gate decision, retention (hour vs day), security, and GH workflow behavior.
+   - Include acceptance tests: gate returns `should_run=false` when same IP appears in window; `/cleanup` removes older data.
+
+Short follow-up prompts (for Jules)
+-----------------------------------
+- **Retention only:**
+  "Add `RETENTION_HOURS`, `RETENTION_WINDOW_MINUTES`, and `BUCKET_LIFECYCLE_DAYS` env vars. Implement `POST /cleanup` to delete GCS objects and BigQuery rows older than `RETENTION_HOURS`. Configure Cloud Scheduler to hit `/cleanup` hourly. If `BUCKET_LIFECYCLE_DAYS > 0`, set a GCS lifecycle rule to delete objects older than N days."
+
+- **Gate policy:**
+  "In `POST /gate`, count records with the same IP where ts is within the last `RETENTION_WINDOW_MINUTES`. If count ≥ 1, return `should_run=false`. If any error occurs, return `should_run=true`."
+
+- **Fail‑open behavior:**
+  "Ensure the gate fails open: network/storage errors must result in `should_run=true` so GH workflows never block due to gate unavailability."
+
+- **Security:**
+  "Require Bearer token on `/ingest`, `/gate`, `/cleanup`. Support optional `X-Signature` with HMAC SHA256 over raw body."
+
