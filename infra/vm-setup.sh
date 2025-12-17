@@ -20,6 +20,7 @@ MAX_RUNS_PER_IP_PER_DAY=${MAX_RUNS_PER_IP_PER_DAY:-3}
 MIN_GAP_HOURS_PER_IP=${MIN_GAP_HOURS_PER_IP:-7}
 DOMAIN=${DOMAIN:-}                          # set domain for HTTPS
 ENABLE_NGINX_TLS=${ENABLE_NGINX_TLS:-false} # true/false
+DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-} # optional discord webhook
 STORAGE_TYPE="local"                        # Force local storage for VM
 
 # =========================
@@ -51,6 +52,16 @@ fi
 
 echo "[+] Installing NPM dependencies"
 npm install --production
+
+# Prompt for Discord Webhook if not set
+if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+    echo ""
+    echo "Enter your Discord Webhook URL (optional, press Enter to skip):"
+    read -r input_webhook
+    if [ -n "$input_webhook" ]; then
+        DISCORD_WEBHOOK_URL="$input_webhook"
+    fi
+fi
 
 # Create .env file for the app
 echo "[+] Creating .env configuration"
@@ -157,4 +168,5 @@ echo " Token: $COLLECTOR_TOKEN"
 if [[ "${ENABLE_NGINX_TLS}" == "true" ]]; then
     echo " Domain: https://$DOMAIN"
 fi
+echo " Discord Webhook: ${DISCORD_WEBHOOK_URL:-Not Configured}"
 echo "=================================================="

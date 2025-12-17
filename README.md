@@ -8,6 +8,7 @@ A Google Cloud Run service to collect GitHub Actions Runner IPs and enforce usag
 *   **Gate Policy:**
     *   **Max Runs:** Limit usage of the same public IP to `N` times per UTC day (default 3).
     *   **Min Gap:** Enforce a minimum gap of `N` hours between uses of the same IP (default 7h).
+*   **Notifications:** Sends "fire-and-forget" alerts to Discord with IP usage stats.
 *   **Retention:**
     *   **Hour-level:** `/cleanup` endpoint removes old records from storage.
     *   **Day-level:** GCS Lifecycle rules auto-delete files after `N` days.
@@ -32,13 +33,14 @@ You can deploy this service in two ways:
 | Variable | Description | Default |
 | :--- | :--- | :--- |
 | `COLLECTOR_TOKEN` | **Required.** Bearer token for auth. | - |
-| `BUCKET_NAME` | **Required.** GCS Bucket to store data. | - |
+| `BUCKET_NAME` | **Required.** GCS Bucket to store data (Cloud Run only). | - |
 | `PROJECT_ID` | **Required.** GCP Project ID. | - |
 | `HMAC_SECRET` | Optional. Shared secret for signature verification. | - |
 | `MAX_RUNS_PER_IP_PER_DAY` | Max times an IP can be used per day. | `3` |
 | `MIN_GAP_HOURS_PER_IP` | Min hours between uses of same IP. | `7` |
 | `RETENTION_HOURS` | Hours to keep data (for `/cleanup`). | `24` |
 | `BUCKET_LIFECYCLE_DAYS` | Days to keep GCS files (GCS Lifecycle). | `1` |
+| `DISCORD_WEBHOOK_URL` | Optional. Discord Webhook for notifications. | - |
 | `EXTERNAL_SINK_URL` | Optional URL to forward events to. | - |
 
 ### Option A: Deploy to Cloud Run (Serverless)
@@ -51,7 +53,7 @@ export PROJECT_ID="your-project-id"
 export COLLECTOR_TOKEN="your-secret-token"
 export BUCKET_NAME="your-bucket-name"
 # Optional overrides
-# export MAX_RUNS_PER_IP_PER_DAY=3
+export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 
 ./infra/cloud-run-deploy.sh
 ```
@@ -59,7 +61,7 @@ export BUCKET_NAME="your-bucket-name"
 ### Option B: Deploy to VM (Ubuntu)
 
 1.  Copy `infra/vm-setup.sh` to your VM.
-2.  Run the script and follow the prompts:
+2.  Run the script and follow the prompts. You will be asked for the **Discord Webhook URL** during setup.
 
 ```bash
 chmod +x vm-setup.sh
@@ -71,6 +73,17 @@ This will:
 *   Set up the app as a systemd service (`ip-collector`).
 *   Configure local filesystem storage.
 *   Setup a local cron job for hourly cleanup.
+
+---
+
+### How to Get a Discord Webhook URL
+
+1.  Open Discord and go to your server.
+2.  Right-click a channel (e.g., `#logs`) -> **Edit Channel**.
+3.  Go to **Integrations** -> **Webhooks**.
+4.  Click **New Webhook**.
+5.  Click **Copy Webhook URL**.
+6.  Use this URL when setting up the deployment.
 
 ---
 

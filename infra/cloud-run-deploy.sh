@@ -17,6 +17,7 @@ MAX_RUNS=${MAX_RUNS_PER_IP_PER_DAY:-3}
 MIN_GAP=${MIN_GAP_HOURS_PER_IP:-7}
 RETENTION=${RETENTION_HOURS:-24}
 LIFECYCLE_DAYS=${BUCKET_LIFECYCLE_DAYS:-1}
+DISCORD_WEBHOOK=${DISCORD_WEBHOOK_URL:-}
 
 echo "Deploying to Project: $PROJECT_ID"
 echo "Bucket: $BUCKET_NAME"
@@ -63,7 +64,8 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars "RETENTION_HOURS=$RETENTION" \
   --set-env-vars "HMAC_SECRET=${HMAC_SECRET}" \
   --set-env-vars "EXTERNAL_SINK_URL=${EXTERNAL_SINK_URL}" \
-  --set-env-vars "EXTERNAL_SINK_TOKEN=${EXTERNAL_SINK_TOKEN}"
+  --set-env-vars "EXTERNAL_SINK_TOKEN=${EXTERNAL_SINK_TOKEN}" \
+  --set-env-vars "DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK}"
 
 # 4. Output Service URL
 SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --project "$PROJECT_ID" --format 'value(status.url)')
