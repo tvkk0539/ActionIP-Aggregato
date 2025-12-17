@@ -89,7 +89,7 @@ app.post('/ingest', async (req, res) => {
  * Decides if a run should proceed based on IP usage policies.
  */
 app.post('/gate', async (req, res) => {
-  const { ip, ts } = req.body;
+  const { ip, ts, account, workflow } = req.body;
 
   // Default response (Fail Open)
   const result = {
@@ -192,7 +192,10 @@ app.post('/gate', async (req, res) => {
 
       // 2. Fire-and-Forget Notification to Discord (Background)
       if (config.DISCORD_WEBHOOK_URL) {
-          sendDiscordNotification(result, ip);
+          // We calculate stats async so we don't block response
+          storage.getUniqueIpCountToday()
+              .then(uniqueCount => sendDiscordNotification(result, ip, uniqueCount, account, workflow))
+              .catch(e => console.error('Discord/Stats Error:', e));
       }
 
   } catch (err) {
@@ -205,15 +208,17 @@ app.post('/gate', async (req, res) => {
 /**
  * Helper: Send Discord Notification (Async)
  */
-function sendDiscordNotification(result, ip, uniqueIpCount) {
+function sendDiscordNotification(result, ip, uniqueIpCount, account, workflow) {
     const isAllowed = result.should_run;
     const color = isAllowed ? 5763719 : 15548997; // Green (5763719) or Red (15548997)
     const title = isAllowed ? "🚀 Job Allowed" : "🛑 Job Blocked";
 
     const fields = [
+        { name: "Workflow", value: workflow || "Unknown", inline: true },
+        { name: "Account", value: account || "Unknown", inline: true },
         { name: "IP Address", value: ip, inline: true },
-        { name: "Reason", value: result.reason || "Policy Check Passed", inline: true },
-        { name: "Runs for this IP", value: `${result.uses_today}`, inline: true }
+        { name: "Runs for this IP", value: `${result.uses_today}`, inline: true },
+        { name: "Reason", value: result.reason || "Policy Check Passed", inline: true }
     ];
 
     if (uniqueIpCount !== null) {
