@@ -106,48 +106,81 @@ app.post('/gate', async (req, res) => {
       // 1. Get all records for this IP today
       const records = await storage.getRecordsForIpToday(ip);
 
-      // Sort by timestamp descending (newest first)
-      records.sort((a, b) => new Date(b.ts) - new Date(a.ts));
+      // Sort by timestamp descending (newest first).
+      // If timestamps are identical, sort by run_id to ensure deterministic order (Tie-breaker).
+      // This ensures that in a concurrent batch, one is always "first".
+      records.sort((a, b) => {
+          const timeDiff = new Date(b.ts) - new Date(a.ts);
+          if (timeDiff !== 0) return timeDiff;
+          return a.run_id.localeCompare(b.run_id);
+      });
 
       result.uses_today = records.length;
       result.last_use_utc = records.length > 0 ? records[0].ts : null;
 
       const currentRequestTime = ts ? parseISO(ts) : new Date();
 
-      // Policy 1: Max Runs Per Day
-      // Note: records includes the current one if it was ingested?
-      // Usually Gate is called *before* or *after* ingest?
-      // Prompt says: "Collects & sends IP early (/ingest). Calls /gate to decide..."
-      // So ingest happened. records count likely includes THIS run.
-      // If limit is 3, and we just ingested the 4th, count is 4. 4 > 3 -> Block.
+      // --- ROBUST FILTERING LOGIC ---
+      // We must determine the list of "Valid Runs" based on the gap policy *chronologically*.
+      // 1. Sort records Oldest -> Newest (ascending) to simulate history replay.
+      // 2. Walk through and accept a run ONLY if it is >= 7h after the last accepted run.
+      // 3. This filters out duplicates and gap violators naturally.
 
-      if (result.uses_today > config.MAX_RUNS_PER_IP_PER_DAY) {
+      // Copy and sort ascending
+      const chronRecords = [...records].sort((a, b) => {
+          const timeDiff = new Date(a.ts) - new Date(b.ts);
+          if (timeDiff !== 0) return timeDiff;
+          return a.run_id.localeCompare(b.run_id); // Stable tie-break
+      });
+
+      const validRuns = [];
+      let lastValidTs = null;
+
+      for (const rec of chronRecords) {
+          if (!lastValidTs) {
+              validRuns.push(rec);
+              lastValidTs = parseISO(rec.ts);
+          } else {
+              const thisTs = parseISO(rec.ts);
+              const gap = differenceInHours(thisTs, lastValidTs);
+              // Note: differenceInHours rounds down. We might want exact diff?
+              // Assuming standard integer hours policy.
+              // If gap >= 7, accept.
+              if (gap >= config.MIN_GAP_HOURS_PER_IP) {
+                   validRuns.push(rec);
+                   lastValidTs = thisTs;
+              }
+              // Else: It's skipped (Duplicate or too soon)
+          }
+      }
+
+      // Now we have the list of runs that "should" have passed.
+      // Check if *this* request (run_id) is in that list.
+      const myRunId = req.body.run_id;
+      const isValid = validRuns.some(r => r.run_id === myRunId);
+
+
+      // 1. Check if I was filtered out by Gap Logic
+      if (!isValid) {
+          result.should_run = false;
+          result.reason = 'gap_not_satisfied';
+          // (It could be a concurrent duplicate or a <7h retry)
+          return res.json(result);
+      }
+
+      // 2. Check if I exceed Max Runs (based on my position in the VALID list)
+      // I am valid, but am I the 4th valid run?
+      // Find my index in validRuns
+      const myValidIndex = validRuns.findIndex(r => r.run_id === myRunId);
+
+      if (myValidIndex >= config.MAX_RUNS_PER_IP_PER_DAY) {
           result.should_run = false;
           result.reason = 'max_runs_reached';
           return res.json(result);
       }
 
-      // Policy 2: Min Gap Hours
-      // We need to compare with the *previous* run (not the current one we just ingested).
-      // If we just ingested the current run, records[0] is likely the current run.
-      // records[1] would be the previous run.
-
-      // Let's identify the previous valid run.
-      // We iterate and find the most recent run that is NOT the current run_id?
-      // Or simply: if we assume /gate is called strictly after /ingest,
-      // we check the gap between "now" (or current ts) and the *previous* stored timestamp.
-
-      // If records.length > 1, the previous run is records[1].
-      if (records.length > 1) {
-          const lastRunTime = parseISO(records[1].ts);
-          const gapHours = differenceInHours(currentRequestTime, lastRunTime);
-
-          if (gapHours < config.MIN_GAP_HOURS_PER_IP) {
-              result.should_run = false;
-              result.reason = 'gap_not_satisfied';
-              return res.json(result);
-          }
-      }
+      // If I passed both checks
+      result.should_run = true;
       // Special case: If records.length is 1, it's the first run today (or the one we just added).
       // No gap check needed against "nothing".
 

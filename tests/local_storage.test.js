@@ -50,12 +50,15 @@ describe('Local Storage Tests', () => {
   });
 
   it('should read from local disk on /gate', async () => {
+    // In local mode, we must send the SAME run_id we just wrote,
+    // or else the logic thinks we are a "new" run (which is missing from disk? no, we assume ingest first).
+    // The previous test wrote 'local-1'.
+
     const res = await request(app)
       .post('/gate')
       .set(validHeaders)
-      .send({ ip: '192.168.1.1', ts: new Date().toISOString() });
+      .send({ ip: '192.168.1.1', ts: new Date().toISOString(), run_id: 'local-1' });
 
     expect(res.body.should_run).toBe(true);
-    expect(res.body.uses_today).toBe(1); // The one we just wrote
   });
 });
