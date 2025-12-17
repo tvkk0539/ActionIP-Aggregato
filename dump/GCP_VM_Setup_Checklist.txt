@@ -1,0 +1,112 @@
+
+GCP VM Setup Checklist — ActionIP Aggregator
+===========================================
+
+Goal
+----
+Prepare an Ubuntu GCP VM to run the IP collector service that supports:
+- POST /ingest (store IP + metadata)
+- POST /gate (3x-per-day + 7-hour-gap policy, fail-open)
+- GET /summary, GET /export
+- POST /cleanup (hour/day retention)
+
+1) Create VM
+------------
+- Console → Compute Engine → VM Instances → Create.
+- Ubuntu 22.04 LTS, e2-micro/e2-small.
+- Firewall: Allow HTTP and HTTPS.
+- Note the external IP.
+
+2) SSH to VM
+------------
+- gcloud compute ssh <INSTANCE_NAME> --zone <ZONE>
+
+3) Update packages
+------------------
+- sudo apt-get update && sudo apt-get -y upgrade
+
+4) Install dependencies
+----------------------
+- Node.js (LTS), npm, git, jq, curl, openssl:
+  ```bash
+  curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+  sudo apt-get install -y nodejs git jq curl openssl
+  ```
+- (Optional) Google Cloud SDK:
+  ```bash
+  sudo apt-get install -y apt-transport-https ca-certificates gnupg
+  curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+  echo "deb https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+  sudo apt-get update && sudo apt-get install -y google-cloud-sdk
+  gcloud auth login && gcloud config set project <YOUR_PROJECT_ID>
+  ```
+
+5) Create runtime directory
+---------------------------
+- sudo mkdir -p /opt/ip-collector
+- sudo chown $USER:$USER /opt/ip-collector
+- cd /opt/ip-collector
+
+6) Optional domain + TLS
+------------------------
+- Point your domain DNS A record to the VM external IP.
+- You may use Nginx + certbot for HTTPS; see the automation script below.
+
+7) Environment variables (examples)
+-----------------------------------
+- Choose a strong COLLECTOR_TOKEN.
+- Defaults:
+  - MAX_RUNS_PER_IP_PER_DAY=3
+  - MIN_GAP_HOURS_PER_IP=7
+  - RETENTION_HOURS=24 (cleanup deletes data older than 24h, approximated by days)
+
+8) Run the automation script
+----------------------------
+- Copy the generated `setup_ip_collector.sh` to the VM.
+- Edit variables at the top (TOKEN, PORT, DOMAIN, etc.).
+- Run:
+  ```bash
+  chmod +x setup_ip_collector.sh
+  sudo ./setup_ip_collector.sh
+  ```
+
+9) Verify service
+-----------------
+- Check service:
+  ```bash
+  sudo systemctl status ip-collector
+  journalctl -u ip-collector -f
+  ```
+- Test endpoints (replace IP/TOKEN):
+  ```bash
+  curl -s -X POST http://<VM_IP>:3000/ingest \
+    -H "Authorization: Bearer <TOKEN>" \
+    -H "Content-Type: application/json" \
+    -d '{"account":"test","repo":"demo/repo","run_id":"1","job":"collect","ip":"203.0.113.7","ts":"2025-12-17T08:00:00Z","country":"US"}'
+
+  curl -s -X POST http://<VM_IP>:3000/gate \
+    -H "Authorization: Bearer <TOKEN>" \
+    -H "Content-Type: application/json" \
+    -d '{"account":"test","repo":"demo/repo","run_id":"2","job":"gate","ip":"203.0.113.7","ts":"2025-12-17T15:00:00Z"}'
+
+  curl -s http://<VM_IP>:3000/summary
+  curl -s "http://<VM_IP>:3000/export?format=json&date=2025-12-17"
+  ```
+
+10) Optional Nginx reverse proxy + TLS
+--------------------------------------
+- If you provided a DOMAIN and enabled TLS in the script, Nginx will proxy https://DOMAIN → http://localhost:3000.
+
+11) GitHub Secrets
+------------------
+- In each repo: set `COLLECTOR_URL`, `COLLECTOR_TOKEN`, optional `HMAC_SECRET` and `IPINFO_TOKEN`.
+
+12) Cloud Scheduler (if you want hourly cleanup)
+-----------------------------------------------
+- Create a Scheduler job to hit POST /cleanup hourly (see the automation script for sample commands).
+
+Notes
+-----
+- The sample server stores data on local disk under /opt/ip-collector/data.
+- For production, prefer Cloud Run + Cloud Storage/BigQuery (your Jules prompt covers that).
+- Gate is fail-open: if reading data fails, it returns should_run=true.
