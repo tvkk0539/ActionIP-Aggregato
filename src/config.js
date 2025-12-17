@@ -7,6 +7,8 @@ module.exports = {
   HMAC_SECRET: process.env.HMAC_SECRET, // Optional HMAC secret
 
   // Storage
+  STORAGE_TYPE: process.env.STORAGE_TYPE || 'gcs', // 'gcs' or 'local'
+  LOCAL_DATA_DIR: process.env.LOCAL_DATA_DIR || './data', // For local storage
   BUCKET_NAME: process.env.BUCKET_NAME,
   PROJECT_ID: process.env.PROJECT_ID, // Useful for BigQuery
   DATASET_ID: process.env.DATASET_ID || 'ip_data', // Default BQ Dataset
