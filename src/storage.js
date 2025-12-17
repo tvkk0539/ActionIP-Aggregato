@@ -203,9 +203,39 @@ async function cleanupGCS() {
     }
 }
 
+/**
+ * Counts the number of unique IPs seen today (count of subdirectories).
+ * Efficient on Local Storage. Returns null for GCS to avoid cost.
+ */
+async function getUniqueIpCountToday() {
+    const dateStr = getTodayDateString();
+
+    if (config.STORAGE_TYPE === 'local') {
+        const todayDir = path.join(config.LOCAL_DATA_DIR, 'ips', dateStr);
+        if (!fs.existsSync(todayDir)) return 0;
+
+        try {
+            // Each IP is a subdirectory
+            const entries = fs.readdirSync(todayDir, { withFileTypes: true });
+            let count = 0;
+            for (const entry of entries) {
+                if (entry.isDirectory()) count++;
+            }
+            return count;
+        } catch (err) {
+            console.error('Error counting unique IPs:', err);
+            return 0;
+        }
+    }
+
+    // GCS: Listing prefixes is possible but expensive/slow. Returning null.
+    return null;
+}
+
 module.exports = {
-  appendToGCS, // Rename suggestion: saveRecord (but keeping name for diff consistency)
+  appendToGCS,
   insertIntoBigQuery,
   getRecordsForIpToday,
+  getUniqueIpCountToday,
   cleanupGCS
 };
