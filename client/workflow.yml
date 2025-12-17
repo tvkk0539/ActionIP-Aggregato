@@ -1,0 +1,98 @@
+name: Daily Docker Cycle (with IP Gate)
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-docker-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  docker-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 290
+
+    steps:
+      - name: Collect runner public IP (early)
+        id: ip
+        continue-on-error: true
+        run: |
+          echo "JOB_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+          echo "IP=$(curl -s https://api.ipify.org)" >> $GITHUB_ENV
+
+      - name: Send IP to collector (Ingest)
+        continue-on-error: true
+        env:
+          COLLECTOR_URL: ${{ secrets.COLLECTOR_URL }}
+          COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+        run: |
+          payload=$(jq -n \
+            --arg account  "${{ github.repository_owner }}" \
+            --arg repo     "${{ github.repository }}" \
+            --arg run_id   "${{ github.run_id }}" \
+            --arg job      "${{ github.job }}" \
+            --arg ip       "${IP:-unknown}" \
+            --arg ts       "${JOB_START}" \
+            '{account:$account,repo:$repo,run_id:$run_id,job:$job,ip:$ip,ts:$ts}')
+
+          # Optional: Generate HMAC signature
+          sig=$(printf "%s" "$payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
+
+          curl -s -X POST "$COLLECTOR_URL/ingest" \
+            -H "Authorization: Bearer $COLLECTOR_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Signature: $sig" \
+            -d "$payload" || true
+
+      - name: Ask collector if we should run (Gate)
+        id: gate
+        continue-on-error: true
+        env:
+          COLLECTOR_URL: ${{ secrets.COLLECTOR_URL }}
+          COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+        run: |
+          gate_payload=$(jq -n \
+            --arg account  "${{ github.repository_owner }}" \
+            --arg repo     "${{ github.repository }}" \
+            --arg run_id   "${{ github.run_id }}" \
+            --arg job      "${{ github.job }}" \
+            --arg ip       "${IP:-unknown}" \
+            --arg ts       "${JOB_START}" \
+            '{account:$account,repo:$repo,run_id:$run_id,job:$job,ip:$ip,ts:$ts}')
+
+          gate_sig=$(printf "%s" "$gate_payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
+
+          resp=$(curl -s -X POST "$COLLECTOR_URL/gate" \
+            -H "Authorization: Bearer $COLLECTOR_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Signature: $gate_sig" \
+            -d "$gate_payload" || echo '{}')
+
+          should_run=$(echo "$resp" | jq -r '.should_run // "true"')
+          reason=$(echo "$resp" | jq -r '.reason // ""')
+
+          echo "Gate decision: should_run=$should_run, reason=$reason"
+          echo "SHOULD_RUN=$should_run" >> $GITHUB_ENV
+          echo "GATE_REASON=$reason" >> $GITHUB_ENV
+
+      - name: Abort early (Policy Check)
+        if: env.SHOULD_RUN != 'true'
+        run: |
+          echo "Policy triggered: ${{ env.GATE_REASON }}. Skipping project run." >> $GITHUB_STEP_SUMMARY
+          exit 0
+
+      # --- Project Steps (Only run if Gate allows) ---
+
+      - name: Checkout repo
+        if: env.SHOULD_RUN == 'true'
+        uses: actions/checkout@v4
+
+      - name: Run Main Script
+        if: env.SHOULD_RUN == 'true'
+        run: |
+           echo "Running project logic..."
+           # ./script.sh
