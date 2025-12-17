@@ -91,13 +91,12 @@ jobs:
         if: env.SHOULD_RUN == 'true'
         uses: actions/checkout@v4
 
-      - name: Run Main Script
+      - name: Make scripts executable
         if: env.SHOULD_RUN == 'true'
         run: |
-           echo "Running project logic..."
+          chmod +x script.sh
+          chmod +x one.sh two.sh three.sh
 
-           # TODO: Add your actual project commands here!
-           # Example:
-           # npm install
-           # npm test
-           # ./my-script.sh
+      - name: Run cyclic Docker script
+        if: env.SHOULD_RUN == 'true'
+        run: ./script.sh
