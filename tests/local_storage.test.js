@@ -3,6 +3,7 @@ const app = require('../src/app');
 const config = require('../src/config');
 const fs = require('fs');
 const path = require('path');
+const { getUniqueIpCountToday } = require('../src/storage'); // Import the function directly for unit testing
 
 // Mock GCS/BigQuery to avoid them being called in local tests
 jest.mock('@google-cloud/storage');
@@ -60,5 +61,31 @@ describe('Local Storage Tests', () => {
       .send({ ip: '192.168.1.1', ts: new Date().toISOString(), run_id: 'local-1' });
 
     expect(res.body.should_run).toBe(true);
+  });
+
+  it('should count unique IPs correctly', async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const todayDir = path.join(testDataDir, 'ips', today);
+
+    // Clean any previous test data for 'today'
+    if (fs.existsSync(todayDir)) {
+        fs.rmSync(todayDir, { recursive: true, force: true });
+    }
+
+    // Write a few different IPs
+    // IP 1: Two runs
+    await request(app).post('/ingest').set(validHeaders).send({ ip: '10.0.0.1', run_id: 'run-A', ts: new Date().toISOString() });
+    await request(app).post('/ingest').set(validHeaders).send({ ip: '10.0.0.1', run_id: 'run-B', ts: new Date().toISOString() });
+
+    // IP 2: One run
+    await request(app).post('/ingest').set(validHeaders).send({ ip: '10.0.0.2', run_id: 'run-C', ts: new Date().toISOString() });
+
+    // IP 3: One run
+    await request(app).post('/ingest').set(validHeaders).send({ ip: '10.0.0.3', run_id: 'run-D', ts: new Date().toISOString() });
+
+    // Verify count
+    const count = await getUniqueIpCountToday();
+    // Should be 3 unique IPs (10.0.0.1, 10.0.0.2, 10.0.0.3)
+    expect(count).toBe(3);
   });
 });
