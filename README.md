@@ -11,10 +11,16 @@ A Google Cloud Run service to collect GitHub Actions Runner IPs and enforce usag
 *   **Retention:**
     *   **Hour-level:** `/cleanup` endpoint removes old records from storage.
     *   **Day-level:** GCS Lifecycle rules auto-delete files after `N` days.
-*   **Storage:** Google Cloud Storage (NDJSON/CSV) + Optional BigQuery.
+*   **Storage:**
+    *   **Cloud Run Mode:** Google Cloud Storage (NDJSON/CSV) + Optional BigQuery.
+    *   **VM Mode:** Local filesystem storage.
 *   **External Sink:** Optionally forward records to an external webhook.
 
 ## Setup & Deployment
+
+You can deploy this service in two ways:
+1.  **Serverless (Recommended):** Google Cloud Run.
+2.  **Virtual Machine (VM):** Ubuntu/Debian VM (Local storage).
 
 ### Prerequisites
 
@@ -35,7 +41,7 @@ A Google Cloud Run service to collect GitHub Actions Runner IPs and enforce usag
 | `BUCKET_LIFECYCLE_DAYS` | Days to keep GCS files (GCS Lifecycle). | `1` |
 | `EXTERNAL_SINK_URL` | Optional URL to forward events to. | - |
 
-### Deploy to Cloud Run
+### Option A: Deploy to Cloud Run (Serverless)
 
 1.  Edit `infra/cloud-run-deploy.sh` or set the variables in your shell.
 2.  Run the script:
@@ -50,9 +56,27 @@ export BUCKET_NAME="your-bucket-name"
 ./infra/cloud-run-deploy.sh
 ```
 
-### Setup Cloud Scheduler (Cleanup)
+### Option B: Deploy to VM (Ubuntu)
 
-After deployment, create a job to run cleanup every hour:
+1.  Copy `infra/vm-setup.sh` to your VM.
+2.  Run the script and follow the prompts:
+
+```bash
+chmod +x vm-setup.sh
+./vm-setup.sh
+```
+
+This will:
+*   Install Node.js and dependencies.
+*   Set up the app as a systemd service (`ip-collector`).
+*   Configure local filesystem storage.
+*   Setup a local cron job for hourly cleanup.
+
+---
+
+### Setup Cloud Scheduler (Only for Cloud Run)
+
+After Cloud Run deployment, create a job to run cleanup every hour:
 
 ```bash
 gcloud scheduler jobs create http ip-collector-cleanup \

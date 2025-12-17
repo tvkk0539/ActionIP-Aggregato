@@ -55,6 +55,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --allow-unauthenticated \
   --project "$PROJECT_ID" \
   --set-env-vars "COLLECTOR_TOKEN=$COLLECTOR_TOKEN" \
+  --set-env-vars "STORAGE_TYPE=gcs" \
   --set-env-vars "BUCKET_NAME=$BUCKET_NAME" \
   --set-env-vars "PROJECT_ID=$PROJECT_ID" \
   --set-env-vars "MAX_RUNS_PER_IP_PER_DAY=$MAX_RUNS" \

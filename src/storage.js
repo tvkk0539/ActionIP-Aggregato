@@ -1,72 +1,78 @@
 const { Storage } = require('@google-cloud/storage');
 const { BigQuery } = require('@google-cloud/bigquery');
 const { format } = require('date-fns');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
-const csvStringify = require('csv-stringify/sync');
 
-const storage = new Storage();
-const bigquery = new BigQuery();
+// Initialize Cloud Clients (only if needed/configured to avoid errors in VM without creds)
+let storage, bigquery;
+if (config.STORAGE_TYPE === 'gcs') {
+    try {
+        storage = new Storage();
+        bigquery = new BigQuery();
+    } catch (e) {
+        console.warn('Could not initialize Google Cloud clients. Ensure credentials are set if using GCS.');
+    }
+}
 
 // Helper to get today's date path in UTC: YYYY-MM-DD
 const getTodayDateString = () => new Date().toISOString().split('T')[0];
 
 /**
- * Appends data to GCS (NDJSON and CSV)
+ * Appends data to Storage (GCS or Local)
  */
 async function appendToGCS(record) {
-  if (!config.BUCKET_NAME) {
-    console.warn('BUCKET_NAME not set, skipping GCS write.');
-    return;
-  }
+    const dateStr = record.ts ? record.ts.split('T')[0] : getTodayDateString();
+    const safeIp = record.ip.replace(/[^a-zA-Z0-9.:-]/g, '_');
+    const filename = `${Date.now()}-${record.run_id}-${Math.floor(Math.random() * 1000)}.json`;
 
-  const dateStr = record.ts ? record.ts.split('T')[0] : getTodayDateString();
-  const bucket = storage.bucket(config.BUCKET_NAME);
+    if (config.STORAGE_TYPE === 'local') {
+        // LOCAL STORAGE IMPLEMENTATION
+        const dir = path.join(config.LOCAL_DATA_DIR, 'ips', dateStr, safeIp);
+        const filePath = path.join(dir, filename);
 
-  // 1. Append to NDJSON
-  const ndjsonFile = bucket.file(`ips/${dateStr}/ips.ndjson`);
-  const ndjsonLine = JSON.stringify(record) + '\n';
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(filePath, JSON.stringify(record));
+        } catch (err) {
+            console.error('Error writing to Local Storage:', err);
+        }
 
-  // Note: GCS doesn't support atomic appends easily without creating many small files or using compose.
-  // For this simplified implementation (and standard Cloud Run scale), we will use a "fire and forget"
-  // approach or standard write. *Warning*: Concurrent writes to the same object can overwrite each other.
-  // A robust production pattern is writing unique files (GUID) and aggregating them, but the prompt implies
-  // simple appending. Since GCS doesn't support true `append` to a single object, the prompt likely implies
-  // a conceptual "log".
-  //
-  // *Correction*: To make this robust for "concurrent runners", we should write unique files per request.
-  // However, for the "Gate" to work by reading them back, we need to read ALL files or a central file.
-  // The prompt asks to "Append to gs://.../ips.ndjson".
-  // *Compromise*: We will use a unique filename per request to guarantee data safety (no overwrites),
-  // and the Reader (Gate) will list and read files in that folder.
-  // File pattern: ips/YYYY-MM-DD/IP_ADDRESS/timestamp-runid-random.json
-  // This structure allows efficient "Gate" lookups by filtering prefix ips/YYYY-MM-DD/IP/
+    } else {
+        // GCS STORAGE IMPLEMENTATION
+        if (!config.BUCKET_NAME || !storage) {
+            console.warn('BUCKET_NAME not set or Storage not init, skipping GCS write.');
+            return;
+        }
 
-  const safeIp = record.ip.replace(/[^a-zA-Z0-9.:-]/g, '_'); // Sanitize IP for filename
-  const filename = `ips/${dateStr}/${safeIp}/${Date.now()}-${record.run_id}-${Math.floor(Math.random() * 1000)}.json`;
-  const file = bucket.file(filename);
+        const bucket = storage.bucket(config.BUCKET_NAME);
+        const gcsPath = `ips/${dateStr}/${safeIp}/${filename}`;
+        const file = bucket.file(gcsPath);
 
-  try {
-    await file.save(JSON.stringify(record));
-  } catch (err) {
-    console.error('Error writing to GCS:', err);
-  }
+        try {
+            await file.save(JSON.stringify(record));
+        } catch (err) {
+            console.error('Error writing to GCS:', err);
+        }
+    }
 }
 
 /**
  * Inserts data into BigQuery (Streaming)
+ * (Only works if Cloud creds are available, even in VM mode if configured)
  */
 async function insertIntoBigQuery(record) {
-  // Only attempt if dataset/table are seemingly configured or standard
-  // We'll assume the user might not have created the table yet, so we wrap in try/catch
+  if (!bigquery) return; // Skip if BQ not init
+
   try {
-    // Transform record for BQ (timestamps need to be objects or specific strings)
     const row = {
       account: record.account,
       repo: record.repo,
       run_id: record.run_id,
       job: record.job,
       ip: record.ip,
-      ts: bigquery.datetime(record.ts), // Ensure correct timestamp format
+      ts: bigquery.datetime(record.ts),
       country: record.country || null,
       asn: record.asn || null,
     };
@@ -77,95 +83,128 @@ async function insertIntoBigQuery(record) {
       .insert([row]);
 
   } catch (err) {
-    // Fail silently/log as per fail-open requirement, or just because BQ might be disabled
-    if (err.code !== 404) { // Ignore 404 (Table not found) to reduce noise if BQ is off
+    if (err.code !== 404) {
        console.error('BigQuery Insert Error:', JSON.stringify(err.errors || err));
     }
   }
 }
 
 /**
- * Reads all records for a specific IP for "today" to make Gate decisions.
- * Returns Array of objects { ip, ts, ... }
+ * Reads all records for a specific IP for "today".
  */
 async function getRecordsForIpToday(ip) {
-  if (!config.BUCKET_NAME) return [];
-
   const dateStr = getTodayDateString();
-  const bucket = storage.bucket(config.BUCKET_NAME);
-
-  // Optimized: Only list files for this specific IP
   const safeIp = ip.replace(/[^a-zA-Z0-9.:-]/g, '_');
-  const prefix = `ips/${dateStr}/${safeIp}/`;
 
-  try {
-    const [files] = await bucket.getFiles({ prefix });
+  const records = [];
 
-    const records = [];
+  if (config.STORAGE_TYPE === 'local') {
+      // LOCAL READ
+      const dir = path.join(config.LOCAL_DATA_DIR, 'ips', dateStr, safeIp);
+      if (!fs.existsSync(dir)) return [];
 
-    // Read only the relevant files
-    const READ_CONCURRENCY = 50;
-    for (let i = 0; i < files.length; i += READ_CONCURRENCY) {
-        const chunk = files.slice(i, i + READ_CONCURRENCY);
-        await Promise.all(chunk.map(async (file) => {
-            try {
-                const [content] = await file.download();
-                const data = JSON.parse(content.toString());
-                records.push(data);
-            } catch (e) {
-                // ignore read errors
-            }
-        }));
-    }
+      try {
+          const files = fs.readdirSync(dir);
+          for (const file of files) {
+              if (file.endsWith('.json')) {
+                  const content = fs.readFileSync(path.join(dir, file));
+                  records.push(JSON.parse(content));
+              }
+          }
+      } catch (err) {
+          console.error('Error reading Local Storage:', err);
+      }
 
-    return records;
-  } catch (err) {
-    console.error('Error reading GCS for Gate:', err);
-    return []; // Fail open (empty list)
+  } else {
+      // GCS READ
+      if (!config.BUCKET_NAME || !storage) return [];
+      const bucket = storage.bucket(config.BUCKET_NAME);
+      const prefix = `ips/${dateStr}/${safeIp}/`;
+
+      try {
+        const [files] = await bucket.getFiles({ prefix });
+        const READ_CONCURRENCY = 50;
+        for (let i = 0; i < files.length; i += READ_CONCURRENCY) {
+            const chunk = files.slice(i, i + READ_CONCURRENCY);
+            await Promise.all(chunk.map(async (file) => {
+                try {
+                    const [content] = await file.download();
+                    records.push(JSON.parse(content.toString()));
+                } catch (e) {}
+            }));
+        }
+      } catch (err) {
+        console.error('Error reading GCS for Gate:', err);
+      }
   }
+
+  return records;
 }
 
 /**
- * Deletes GCS files older than RETENTION_HOURS
+ * Deletes files older than RETENTION_HOURS
  */
 async function cleanupGCS() {
-    if (!config.BUCKET_NAME) return;
-
-    const bucket = storage.bucket(config.BUCKET_NAME);
     const retentionMs = config.RETENTION_HOURS * 60 * 60 * 1000;
     const now = Date.now();
 
-    // We need to list all files. This can be expensive.
-    // A better strategy for "hourly" cleanup might be to look at folders from previous days?
-    // But the requirement says "older than N hours".
-    // We will list recursively (default).
+    if (config.STORAGE_TYPE === 'local') {
+        // LOCAL CLEANUP (Recursive walk)
+        // Simplified: Walk ips/ dir.
+        // Optimization: In real prod, checking every file is slow.
+        // We will just check the 'ips/' folder.
 
-    try {
-        const [files] = await bucket.getFiles();
-
-        const deletePromises = files.map(async (file) => {
-            // Check metadata
-            const [metadata] = await file.getMetadata();
-            const createdTime = new Date(metadata.timeCreated).getTime();
-
-            if (now - createdTime > retentionMs) {
-                try {
-                    await file.delete();
-                    console.log(`Deleted expired file: ${file.name}`);
-                } catch (e) {
-                    console.error(`Failed to delete ${file.name}`, e);
+        async function walk(dir) {
+            const list = fs.readdirSync(dir);
+            list.forEach(file => {
+                const filePath = path.join(dir, file);
+                const stat = fs.statSync(filePath);
+                if (stat && stat.isDirectory()) {
+                    walk(filePath);
+                    // Remove empty directories
+                    if (fs.readdirSync(filePath).length === 0) {
+                        fs.rmdirSync(filePath);
+                    }
+                } else {
+                    // It's a file
+                    if (now - stat.birthtimeMs > retentionMs) {
+                        fs.unlinkSync(filePath);
+                        console.log(`Deleted expired local file: ${filePath}`);
+                    }
                 }
-            }
-        });
+            });
+        }
 
-        await Promise.all(deletePromises);
-    } catch (err) {
-        console.error('Error during cleanup:', err);
+        try {
+            if (fs.existsSync(path.join(config.LOCAL_DATA_DIR, 'ips'))) {
+                 walk(path.join(config.LOCAL_DATA_DIR, 'ips'));
+            }
+        } catch (e) {
+            console.error('Local cleanup error:', e);
+        }
+
+    } else {
+        // GCS CLEANUP
+        if (!config.BUCKET_NAME || !storage) return;
+        const bucket = storage.bucket(config.BUCKET_NAME);
+        try {
+            const [files] = await bucket.getFiles();
+            const deletePromises = files.map(async (file) => {
+                const [metadata] = await file.getMetadata();
+                const createdTime = new Date(metadata.timeCreated).getTime();
+                if (now - createdTime > retentionMs) {
+                    await file.delete();
+                }
+            });
+            await Promise.all(deletePromises);
+        } catch (err) {
+            console.error('Error during GCS cleanup:', err);
+        }
     }
 }
 
 module.exports = {
-  appendToGCS,
+  appendToGCS, // Rename suggestion: saveRecord (but keeping name for diff consistency)
   insertIntoBigQuery,
   getRecordsForIpToday,
   cleanupGCS
