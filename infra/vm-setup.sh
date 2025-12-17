@@ -55,9 +55,26 @@ npm install --production
 
 # Prompt for Discord Webhook if not set
 if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+    # Try to read from /dev/tty to handle pipe execution cases
     echo ""
-    echo "Enter your Discord Webhook URL (optional, press Enter to skip):"
-    read -r input_webhook
+    echo "----------------------------------------------------------------"
+    echo " OPTIONAL: Discord Notification Setup"
+    echo "----------------------------------------------------------------"
+    echo "Enter your Discord Webhook URL (press Enter to skip):"
+
+    if [ -t 0 ]; then
+        read -r input_webhook
+    else
+        # Fallback if stdin is not a TTY (e.g. piped curl)
+        # Attempt to read from /dev/tty explicitly
+        if read -r input_webhook < /dev/tty; then
+            :
+        else
+            input_webhook=""
+            echo "Warning: Cannot read input. Skipping Discord setup."
+        fi
+    fi
+
     if [ -n "$input_webhook" ]; then
         DISCORD_WEBHOOK_URL="$input_webhook"
     fi
@@ -84,6 +101,7 @@ mkdir -p "$APP_DIR/data"
 # Configure Systemd Service
 # =========================
 echo "[+] Configuring systemd service"
+# We add EnvironmentFile to ensure .env is definitely loaded by systemd
 sudo bash -c "cat > /etc/systemd/system/ip-collector.service <<SERVICE
 [Unit]
 Description=ActionIP Aggregator Service
@@ -91,6 +109,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=$APP_DIR
+EnvironmentFile=$APP_DIR/.env
 ExecStart=/usr/bin/npm start
 Restart=always
 User=root
