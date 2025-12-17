@@ -1,0 +1,135 @@
+name: Daily Docker Cycle 2 (with IP Gate)
+
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: daily-docker-2-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  docker-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 290
+
+    steps:
+      - name: Collect runner public IP (early)
+        id: ip
+        continue-on-error: true
+        env:
+          ACC_1: ${{ secrets.ACCOUNT_1 }}
+          ACC_2: ${{ secrets.ACCOUNT_2 }}
+          ACC_3: ${{ secrets.ACCOUNT_3 }}
+        run: |
+          echo "JOB_START=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_ENV
+          echo "IP=$(curl -s https://api.ipify.org)" >> $GITHUB_ENV
+
+          # Calculate which Account/Script is active today
+          # Order: two.sh, three.sh, one.sh
+          # Mapping:
+          #   Index 0 -> two.sh   -> Use ACCOUNT_2
+          #   Index 1 -> three.sh -> Use ACCOUNT_3
+          #   Index 2 -> one.sh   -> Use ACCOUNT_1
+
+          DAY_NUM=$(date +%j | sed 's/^0*//') # Remove leading zeros
+          INDEX=$(( (DAY_NUM - 1) % 3 ))
+
+          if [ "$INDEX" -eq 0 ]; then
+             echo "Using two.sh -> Account 2"
+             echo "ACTIVE_ACCOUNT=$ACC_2" >> $GITHUB_ENV
+          elif [ "$INDEX" -eq 1 ]; then
+             echo "Using three.sh -> Account 3"
+             echo "ACTIVE_ACCOUNT=$ACC_3" >> $GITHUB_ENV
+          else
+             echo "Using one.sh -> Account 1"
+             echo "ACTIVE_ACCOUNT=$ACC_1" >> $GITHUB_ENV
+          fi
+
+      - name: Send IP to collector (Ingest)
+        continue-on-error: true
+        env:
+          COLLECTOR_URL: ${{ secrets.COLLECTOR_URL }}
+          COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+        run: |
+          # Use calculated ACTIVE_ACCOUNT or fallback to repo owner
+          ACC="${ACTIVE_ACCOUNT:-${{ github.repository_owner }}}"
+
+          payload=$(jq -n \
+            --arg account  "$ACC" \
+            --arg repo     "${{ github.repository }}" \
+            --arg run_id   "${{ github.run_id }}" \
+            --arg job      "${{ github.job }}" \
+            --arg workflow "${{ github.workflow }}" \
+            --arg ip       "${IP:-unknown}" \
+            --arg ts       "${JOB_START}" \
+            '{account:$account,repo:$repo,run_id:$run_id,job:$job,workflow:$workflow,ip:$ip,ts:$ts}')
+
+          # Optional: Generate HMAC signature
+          sig=$(printf "%s" "$payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
+
+          curl -s -X POST "$COLLECTOR_URL/ingest" \
+            -H "Authorization: Bearer $COLLECTOR_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Signature: $sig" \
+            -d "$payload" || true
+
+      - name: Ask collector if we should run (Gate)
+        id: gate
+        continue-on-error: true
+        env:
+          COLLECTOR_URL: ${{ secrets.COLLECTOR_URL }}
+          COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+        run: |
+          # Use calculated ACTIVE_ACCOUNT or fallback to repo owner
+          ACC="${ACTIVE_ACCOUNT:-${{ github.repository_owner }}}"
+
+          gate_payload=$(jq -n \
+            --arg account  "$ACC" \
+            --arg repo     "${{ github.repository }}" \
+            --arg run_id   "${{ github.run_id }}" \
+            --arg job      "${{ github.job }}" \
+            --arg workflow "${{ github.workflow }}" \
+            --arg ip       "${IP:-unknown}" \
+            --arg ts       "${JOB_START}" \
+            '{account:$account,repo:$repo,run_id:$run_id,job:$job,workflow:$workflow,ip:$ip,ts:$ts}')
+
+          gate_sig=$(printf "%s" "$gate_payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
+
+          resp=$(curl -s -X POST "$COLLECTOR_URL/gate" \
+            -H "Authorization: Bearer $COLLECTOR_TOKEN" \
+            -H "Content-Type: application/json" \
+            -H "X-Signature: $gate_sig" \
+            -d "$gate_payload" || echo '{}')
+
+          should_run=$(echo "$resp" | jq -r '.should_run // "true"')
+          reason=$(echo "$resp" | jq -r '.reason // ""')
+
+          echo "Gate decision: should_run=$should_run, reason=$reason"
+          echo "SHOULD_RUN=$should_run" >> $GITHUB_ENV
+          echo "GATE_REASON=$reason" >> $GITHUB_ENV
+
+      - name: Abort early (Policy Check)
+        if: env.SHOULD_RUN != 'true'
+        run: |
+          echo "Policy triggered: ${{ env.GATE_REASON }}. Skipping project run." >> $GITHUB_STEP_SUMMARY
+          exit 0
+
+      # --- Project Steps (Only run if Gate allows) ---
+
+      - name: Checkout repo
+        if: env.SHOULD_RUN == 'true'
+        uses: actions/checkout@v4
+
+      - name: Make scripts executable
+        if: env.SHOULD_RUN == 'true'
+        run: |
+          chmod +x script.sh
+          chmod +x one.sh two.sh three.sh
+
+      - name: Run cyclic Docker script
+        if: env.SHOULD_RUN == 'true'
+        run: ./script.sh
