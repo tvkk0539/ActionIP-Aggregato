@@ -53,6 +53,7 @@ export PROJECT_ID="your-project-id"
 export COLLECTOR_TOKEN="your-secret-token"
 export BUCKET_NAME="your-bucket-name"
 # Optional overrides
+# export MAX_RUNS_PER_IP_PER_DAY=3
 export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 
 ./infra/cloud-run-deploy.sh
