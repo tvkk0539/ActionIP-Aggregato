@@ -34,9 +34,10 @@ jobs:
             --arg repo     "${{ github.repository }}" \
             --arg run_id   "${{ github.run_id }}" \
             --arg job      "${{ github.job }}" \
+            --arg workflow "${{ github.workflow }}" \
             --arg ip       "${IP:-unknown}" \
             --arg ts       "${JOB_START}" \
-            '{account:$account,repo:$repo,run_id:$run_id,job:$job,ip:$ip,ts:$ts}')
+            '{account:$account,repo:$repo,run_id:$run_id,job:$job,workflow:$workflow,ip:$ip,ts:$ts}')
 
           # Optional: Generate HMAC signature
           sig=$(printf "%s" "$payload" | openssl dgst -sha256 -hmac "$HMAC_SECRET" -binary | base64)
