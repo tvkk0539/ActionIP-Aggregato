@@ -187,7 +187,13 @@ app.post('/gate', async (req, res) => {
       // Additional Check: "Concurrent Duplicates" from the FIRST prompt (optional but good to have?)
       // The second prompt emphasizes 3x/7h. We stick to that.
 
+      // 1. Send answer to GitHub IMMEDIATELY (Zero Latency)
       res.json(result);
+
+      // 2. Fire-and-Forget Notification to Discord (Background)
+      if (config.DISCORD_WEBHOOK_URL) {
+          sendDiscordNotification(result, ip);
+      }
 
   } catch (err) {
       console.error('Gate Error:', err);
@@ -195,6 +201,33 @@ app.post('/gate', async (req, res) => {
       res.json({ ...result, should_run: true, reason: 'error_fail_open' });
   }
 });
+
+/**
+ * Helper: Send Discord Notification (Async)
+ */
+function sendDiscordNotification(result, ip) {
+    const isAllowed = result.should_run;
+    const color = isAllowed ? 5763719 : 15548997; // Green (5763719) or Red (15548997)
+    const title = isAllowed ? "🚀 Job Allowed" : "🛑 Job Blocked";
+
+    // Don't await this. Let it run in background.
+    axios.post(config.DISCORD_WEBHOOK_URL, {
+        embeds: [{
+            title: title,
+            color: color,
+            fields: [
+                { name: "IP Address", value: ip, inline: true },
+                { name: "Reason", value: result.reason || "Policy Check Passed", inline: true },
+                { name: "Uses Today", value: `${result.uses_today}`, inline: true }
+            ],
+            footer: { text: "ActionIP Aggregator" },
+            timestamp: new Date().toISOString()
+        }]
+    }).catch(err => {
+        // Silently fail or log lightweight error so we don't spam logs
+        // console.error('Discord Notification Failed:', err.message);
+    });
+}
 
 /**
  * POST /cleanup
