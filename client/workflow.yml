@@ -95,4 +95,9 @@ jobs:
         if: env.SHOULD_RUN == 'true'
         run: |
            echo "Running project logic..."
-           # ./script.sh
+
+           # TODO: Add your actual project commands here!
+           # Example:
+           # npm install
+           # npm test
+           # ./my-script.sh
