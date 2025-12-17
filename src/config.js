@@ -25,6 +25,7 @@ module.exports = {
   // External Sink (Optional)
   EXTERNAL_SINK_URL: process.env.EXTERNAL_SINK_URL,
   EXTERNAL_SINK_TOKEN: process.env.EXTERNAL_SINK_TOKEN,
+  DISCORD_WEBHOOK_URL: process.env.DISCORD_WEBHOOK_URL,
 
   // Misc
   TIMEZONE_UTC: true, // Always enforce UTC for consistency
