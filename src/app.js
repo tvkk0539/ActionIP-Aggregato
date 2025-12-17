@@ -205,21 +205,27 @@ app.post('/gate', async (req, res) => {
 /**
  * Helper: Send Discord Notification (Async)
  */
-function sendDiscordNotification(result, ip) {
+function sendDiscordNotification(result, ip, uniqueIpCount) {
     const isAllowed = result.should_run;
     const color = isAllowed ? 5763719 : 15548997; // Green (5763719) or Red (15548997)
     const title = isAllowed ? "🚀 Job Allowed" : "🛑 Job Blocked";
+
+    const fields = [
+        { name: "IP Address", value: ip, inline: true },
+        { name: "Reason", value: result.reason || "Policy Check Passed", inline: true },
+        { name: "Runs for this IP", value: `${result.uses_today}`, inline: true }
+    ];
+
+    if (uniqueIpCount !== null) {
+        fields.push({ name: "Total Unique IPs Today", value: `${uniqueIpCount}`, inline: true });
+    }
 
     // Don't await this. Let it run in background.
     axios.post(config.DISCORD_WEBHOOK_URL, {
         embeds: [{
             title: title,
             color: color,
-            fields: [
-                { name: "IP Address", value: ip, inline: true },
-                { name: "Reason", value: result.reason || "Policy Check Passed", inline: true },
-                { name: "Uses Today", value: `${result.uses_today}`, inline: true }
-            ],
+            fields: fields,
             footer: { text: "ActionIP Aggregator" },
             timestamp: new Date().toISOString()
         }]
