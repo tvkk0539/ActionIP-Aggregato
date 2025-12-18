@@ -147,3 +147,41 @@ gcloud scheduler jobs create http ip-collector-cleanup \
 *   **"Unauthorized" / 401/403:**
     *   Ensure the `COLLECTOR_TOKEN` in your GitHub Secrets matches exactly what you deployed with.
     *   Ensure the deployment allows unauthenticated invocations (our script sets `--allow-unauthenticated`), because the app handles its own auth via the Token.
+
+---
+
+## 6. Verification & Testing
+
+### "Missing or invalid Authorization header"
+If you open your Service URL in a browser and see this error:
+> `{"error":"Missing or invalid Authorization header"}`
+
+**🎉 This is GOOD!**
+It means your service is running and properly protecting itself. It rejected you because you didn't provide the `COLLECTOR_TOKEN`.
+
+### How to Test Properly
+To test if it works, you must use `curl` and provide the token. Run this in your terminal:
+
+```bash
+# Replace with your actual URL and Token
+curl -X POST https://YOUR-SERVICE-URL.run.app/ingest \
+     -H "Authorization: Bearer YOUR_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"ip": "1.2.3.4", "run_id": "test-run"}'
+```
+
+If it works, you will see: `{"status":"ok"}`.
+
+---
+
+## 7. Managing Environment Variables
+
+In Cloud Run, there is **no `.env` file** and no `systemctl`. Everything is managed through the Google Cloud Console.
+
+### How to View/Edit Variables:
+1.  Go to the [Cloud Run Console](https://console.cloud.google.com/run).
+2.  Click on your service name (`ip-collector`).
+3.  Click **Edit & Deploy New Revision** (top toolbar).
+4.  Go to the **Variables & Secrets** tab.
+5.  Here you can see `COLLECTOR_TOKEN`, `DISCORD_WEBHOOK_URL`, etc.
+6.  Change a value and click **Deploy** to update the service.
