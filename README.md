@@ -20,7 +20,7 @@ A Google Cloud Run service to collect GitHub Actions Runner IPs and enforce usag
 ## Deployment Options
 
 You can deploy this service in three ways:
-1.  **Serverless (Cloud Run):** Best for scalability and low maintenance.
+1.  **Serverless (Cloud Run):** Best for scalability, low maintenance, and cost (Pay-per-use).
 2.  **Virtual Machine (VM):** Ubuntu/Debian VM with Systemd.
 3.  **Docker / Docker Compose:** Run anywhere (VPS, Local, etc.) in a container.
 
@@ -47,8 +47,11 @@ You can deploy this service in three ways:
 
 ---
 
-### Option A: Deploy to Cloud Run (Serverless)
+### Option A: Deploy to Cloud Run (Serverless) - *Recommended*
 
+See **[infra/CLOUD_RUN_GUIDE.md](infra/CLOUD_RUN_GUIDE.md)** for a detailed, step-by-step guide on setting up Cloud Run from scratch.
+
+Quick Start:
 1.  Edit `infra/cloud-run-deploy.sh` or set the variables in your shell.
 2.  Run the script:
 
