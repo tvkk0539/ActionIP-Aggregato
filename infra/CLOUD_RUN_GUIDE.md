@@ -187,3 +187,22 @@ In Cloud Run, there is **no `.env` file** and no `systemctl`. Everything is mana
 4.  Go to the **Variables & Secrets** tab.
 5.  Here you can see `COLLECTOR_TOKEN`, `DISCORD_WEBHOOK_URL`, etc.
 6.  Change a value and click **Deploy** to update the service.
+
+---
+
+## 8. Updating Your Application
+
+To update your code or change configurations (like `MAX_RUNS_PER_IP`):
+
+1.  Make your changes in the code.
+2.  Open your terminal/Cloud Shell.
+3.  Re-run the deployment script:
+    ```bash
+    ./infra/cloud-run-deploy.sh
+    ```
+
+**Is it safe? Yes!**
+*   It creates a new **Revision** of your service.
+*   It automatically points the URL to the new version.
+*   It checks if the storage bucket exists (and won't delete it).
+*   **Traffic Migration:** Cloud Run automatically migrates traffic to the new version with zero downtime.
