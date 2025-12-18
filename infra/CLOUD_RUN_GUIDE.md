@@ -20,7 +20,7 @@ For this project, **Cloud Run is superior.**
 
 ## 2. Prerequisites
 
-Before deploying, you need a Google Cloud Project.
+Before deploying, you need a Google Cloud Project and a way to send the code to it.
 
 1.  **Create a Project:** Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a new project (e.g., `actionip-project`).
 2.  **Enable Billing:** You must enable billing to use Cloud Run, even if your usage stays within the free tier.
@@ -32,23 +32,37 @@ Before deploying, you need a Google Cloud Project.
 
 ---
 
-## 3. Detailed Setup & Deployment
+## 3. How to Deploy (The "gcloud" Tool)
 
-You can deploy using the command line (`gcloud`), which is the easiest way with our provided scripts.
+To deploy, you need the **Google Cloud CLI (`gcloud`)**. This is the tool that runs **on your computer** (or in the browser) to talk to Google's servers and upload your code. You do NOT need to install this on a server; you use it to *create* the server.
 
-### Step 1: Install Google Cloud CLI
-If you don't have it, install the `gcloud` CLI: [Install Guide](https://cloud.google.com/sdk/docs/install)
+### Option A: Use Google Cloud Shell (Easiest - No Install)
+You can run all deployment commands directly in your browser without installing anything on your laptop.
 
-Once installed, log in:
-```bash
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-```
+1.  Open the [Google Cloud Console](https://console.cloud.google.com/).
+2.  Click the **Activate Cloud Shell** icon (>_) in the top right toolbar.
+3.  In the terminal that opens, clone your repo:
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/ActionIP-Aggregator.git
+    cd ActionIP-Aggregator
+    ```
+4.  Proceed to **Step 2** below.
+
+### Option B: Install on Local Machine
+If you prefer to work from your own terminal:
+1.  Install the `gcloud` CLI: [Install Guide](https://cloud.google.com/sdk/docs/install)
+2.  Log in:
+    ```bash
+    gcloud auth login
+    gcloud config set project YOUR_PROJECT_ID
+    ```
+
+---
 
 ### Step 2: Configure Your Environment
 We need to tell the deployment script your secret token and project details.
 
-**Open your terminal (in the project folder) and run:**
+**Run these commands in your terminal (Cloud Shell or Local):**
 
 ```bash
 # 1. Set your Project ID (found in GCP Console dashboard)
