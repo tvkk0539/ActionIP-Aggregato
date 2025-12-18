@@ -39,12 +39,15 @@ jobs:
           if [ "$INDEX" -eq 0 ]; then
              echo "Using three.sh -> Account 3"
              echo "ACTIVE_ACCOUNT=$ACC_3" >> $GITHUB_ENV
+             echo "ACCOUNT_NAME=Account 3" >> $GITHUB_ENV
           elif [ "$INDEX" -eq 1 ]; then
              echo "Using one.sh -> Account 1"
              echo "ACTIVE_ACCOUNT=$ACC_1" >> $GITHUB_ENV
+             echo "ACCOUNT_NAME=Account 1" >> $GITHUB_ENV
           else
              echo "Using two.sh -> Account 2"
              echo "ACTIVE_ACCOUNT=$ACC_2" >> $GITHUB_ENV
+             echo "ACCOUNT_NAME=Account 2" >> $GITHUB_ENV
           fi
 
       - name: Send IP to collector (Ingest)
@@ -55,10 +58,11 @@ jobs:
           HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
         run: |
           # Use calculated ACTIVE_ACCOUNT or fallback to repo owner
-          ACC="${ACTIVE_ACCOUNT:-${{ github.repository_owner }}}"
+          # Use ACCOUNT_NAME for the display label in payload
+          ACC_LABEL="${ACCOUNT_NAME:-${{ github.repository_owner }}}"
 
           payload=$(jq -n \
-            --arg account  "$ACC" \
+            --arg account  "$ACC_LABEL" \
             --arg repo     "${{ github.repository }}" \
             --arg run_id   "${{ github.run_id }}" \
             --arg job      "${{ github.job }}" \
@@ -84,11 +88,11 @@ jobs:
           COLLECTOR_TOKEN: ${{ secrets.COLLECTOR_TOKEN }}
           HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
         run: |
-          # Use calculated ACTIVE_ACCOUNT or fallback to repo owner
-          ACC="${ACTIVE_ACCOUNT:-${{ github.repository_owner }}}"
+          # Use ACCOUNT_NAME for the display label in payload
+          ACC_LABEL="${ACCOUNT_NAME:-${{ github.repository_owner }}}"
 
           gate_payload=$(jq -n \
-            --arg account  "$ACC" \
+            --arg account  "$ACC_LABEL" \
             --arg repo     "${{ github.repository }}" \
             --arg run_id   "${{ github.run_id }}" \
             --arg job      "${{ github.job }}" \
