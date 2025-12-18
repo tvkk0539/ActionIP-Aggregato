@@ -89,7 +89,7 @@ app.post('/ingest', async (req, res) => {
  * Decides if a run should proceed based on IP usage policies.
  */
 app.post('/gate', async (req, res) => {
-  const { ip, ts, account, workflow } = req.body;
+  const { ip, ts, account, account_label, workflow } = req.body;
 
   // Default response (Fail Open)
   const result = {
@@ -194,7 +194,7 @@ app.post('/gate', async (req, res) => {
       if (config.DISCORD_WEBHOOK_URL) {
           // We calculate stats async so we don't block response
           storage.getUniqueIpCountToday()
-              .then(uniqueCount => sendDiscordNotification(result, ip, uniqueCount, account, workflow))
+              .then(uniqueCount => sendDiscordNotification(result, ip, uniqueCount, account, workflow, account_label))
               .catch(e => console.error('Discord/Stats Error:', e));
       }
 
@@ -208,14 +208,26 @@ app.post('/gate', async (req, res) => {
 /**
  * Helper: Send Discord Notification (Async)
  */
-function sendDiscordNotification(result, ip, uniqueIpCount, account, workflow) {
+function sendDiscordNotification(result, ip, uniqueIpCount, account, workflow, account_label) {
     const isAllowed = result.should_run;
     const color = isAllowed ? 5763719 : 15548997; // Green (5763719) or Red (15548997)
     const title = isAllowed ? "🚀 Job Allowed" : "🛑 Job Blocked";
 
+    // Format Account Display
+    // If account_label exists, use it. But user wants to see the ID too?
+    // User request: "just mention the number is enough in the Account 1 ... and the email just show is enough like previously"
+    // Interpretation: "Account" field should have Account Name. A separate "Email" field?
+    // Or combined: "Account 1 (email@...)"
+    // Let's go with combined for clarity as planned.
+
+    let accountDisplay = account || "Unknown";
+    if (account_label) {
+        accountDisplay = `${account_label} (${account})`;
+    }
+
     const fields = [
         { name: "Workflow", value: workflow || "Unknown", inline: true },
-        { name: "Account", value: account || "Unknown", inline: true },
+        { name: "Account", value: accountDisplay, inline: true },
         { name: "IP Address", value: ip, inline: true },
         { name: "Runs for this IP", value: `${result.uses_today}`, inline: true },
         { name: "Reason", value: result.reason || "Policy Check Passed", inline: true }
