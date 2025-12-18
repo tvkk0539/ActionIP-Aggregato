@@ -125,7 +125,7 @@ Add these secrets:
 ### B. Setup Cleanup Job (Cloud Scheduler)
 Since Cloud Run doesn't run background timers (cron) like a VM, we use **Cloud Scheduler** to ping the `/cleanup` endpoint once an hour.
 
-Run this command in your terminal:
+**Run this command ONE TIME in your terminal:**
 
 ```bash
 gcloud scheduler jobs create http ip-collector-cleanup \
@@ -136,6 +136,8 @@ gcloud scheduler jobs create http ip-collector-cleanup \
   --location=us-central1
 ```
 *(Replace `YOUR_SERVICE_URL` and `YOUR_TOKEN` with your actual values)*
+
+> **Note:** Once you run this command successfully, Google Cloud will take over and automatically run the job every hour. You do NOT need to run it again.
 
 ---
 
