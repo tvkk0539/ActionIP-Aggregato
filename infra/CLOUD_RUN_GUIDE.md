@@ -36,7 +36,11 @@ Before deploying, you need a Google Cloud Project and a way to send the code to 
 
 To deploy, you need the **Google Cloud CLI (`gcloud`)**. This is the tool that runs **on your computer** (or in the browser) to talk to Google's servers and upload your code. You do NOT need to install this on a server; you use it to *create* the server.
 
-### Option A: Use Google Cloud Shell (Easiest - No Install)
+### Step 1: Install Google Cloud CLI
+
+You have two options to run the deployment commands:
+
+#### Option A: Use Google Cloud Shell (Easiest - No Install)
 You can run all deployment commands directly in your browser without installing anything on your laptop.
 
 1.  Open the [Google Cloud Console](https://console.cloud.google.com/).
@@ -48,10 +52,16 @@ You can run all deployment commands directly in your browser without installing 
     ```
 4.  Proceed to **Step 2** below.
 
-### Option B: Install on Local Machine
-If you prefer to work from your own terminal:
-1.  Install the `gcloud` CLI: [Install Guide](https://cloud.google.com/sdk/docs/install)
-2.  Log in:
+#### Option B: Install on Local Machine (Your Laptop/VM)
+If you prefer to work from your own terminal (Debian/Ubuntu/Mac/Windows):
+
+1.  **Manual Install:** Follow the official [Install Guide](https://cloud.google.com/sdk/docs/install).
+2.  **Automatic Install (Debian/Ubuntu):** We have provided a script to automate this for you.
+    ```bash
+    chmod +x infra/install-gcloud.sh
+    ./infra/install-gcloud.sh
+    ```
+3.  **Login:**
     ```bash
     gcloud auth login
     gcloud config set project YOUR_PROJECT_ID
