@@ -137,7 +137,14 @@ gcloud scheduler jobs create http ip-collector-cleanup \
 ```
 *(Replace `YOUR_SERVICE_URL` and `YOUR_TOKEN` with your actual values)*
 
-> **Note:** Once you run this command successfully, Google Cloud will take over and automatically run the job every hour. You do NOT need to run it again.
+#### Changing the Schedule Later
+If you want to change the schedule later (e.g., to run every 5 hours), **do not** run the `create` command again (it will error saying the job exists). Instead, use `update`:
+
+```bash
+gcloud scheduler jobs update http ip-collector-cleanup \
+  --schedule="0 */5 * * *" \
+  --location=us-central1
+```
 
 ---
 
