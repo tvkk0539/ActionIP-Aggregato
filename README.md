@@ -17,16 +17,18 @@ A Google Cloud Run service to collect GitHub Actions Runner IPs and enforce usag
     *   **VM Mode:** Local filesystem storage.
 *   **External Sink:** Optionally forward records to an external webhook.
 
-## Setup & Deployment
+## Deployment Options
 
-You can deploy this service in two ways:
-1.  **Serverless (Recommended):** Google Cloud Run.
-2.  **Virtual Machine (VM):** Ubuntu/Debian VM (Local storage).
+You can deploy this service in three ways:
+1.  **Serverless (Cloud Run):** Best for scalability and low maintenance.
+2.  **Virtual Machine (VM):** Ubuntu/Debian VM with Systemd.
+3.  **Docker / Docker Compose:** Run anywhere (VPS, Local, etc.) in a container.
 
 ### Prerequisites
 
-*   Google Cloud Project (GCP)
-*   `gcloud` CLI installed and authenticated.
+*   Google Cloud Project (GCP) - *Required for Cloud Run.*
+*   Docker & Docker Compose - *Required for Docker deployment.*
+*   Node.js 20+ - *Required for manual local dev.*
 
 ### Environment Variables
 
@@ -42,6 +44,8 @@ You can deploy this service in two ways:
 | `BUCKET_LIFECYCLE_DAYS` | Days to keep GCS files (GCS Lifecycle). | `1` |
 | `DISCORD_WEBHOOK_URL` | Optional. Discord Webhook for notifications. | - |
 | `EXTERNAL_SINK_URL` | Optional URL to forward events to. | - |
+
+---
 
 ### Option A: Deploy to Cloud Run (Serverless)
 
@@ -59,7 +63,9 @@ export DISCORD_WEBHOOK_URL="https://discord.com/api/webhooks/..."
 ./infra/cloud-run-deploy.sh
 ```
 
-### Option B: Deploy to VM (Ubuntu)
+---
+
+### Option B: Deploy to VM (Ubuntu/Debian)
 
 1.  Copy `infra/vm-setup.sh` to your VM.
 2.  Run the script and follow the prompts. You will be asked for the **Discord Webhook URL** during setup.
@@ -74,6 +80,57 @@ This will:
 *   Set up the app as a systemd service (`ip-collector`).
 *   Configure local filesystem storage.
 *   Setup a local cron job for hourly cleanup.
+
+---
+
+### Option C: Docker Deployment
+
+You can run the application in a container using the provided `Dockerfile` and `docker-compose.yml`. This works on any system with Docker installed (Linux, Mac, Windows).
+
+#### 1. Using Docker Compose (Recommended)
+
+This method handles port mapping and data persistence automatically.
+
+**Setup:**
+1.  Open `docker-compose.yml` and update the environment variables (specifically `COLLECTOR_TOKEN` and `DISCORD_WEBHOOK_URL`).
+2.  Or, create a `.env` file in the root directory (Docker Compose reads it automatically):
+    ```env
+    COLLECTOR_TOKEN=my-super-secret-token
+    DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+    STORAGE_TYPE=local
+    ```
+
+**Run:**
+```bash
+# Start in the background
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+```
+
+The service will be available at `http://localhost:3000`. Data will be persisted in the `./data` folder on your host machine.
+
+#### 2. Manual Docker Build & Run
+
+If you prefer to run `docker` commands manually:
+
+**Build the image:**
+```bash
+docker build -t actionip-aggregator .
+```
+
+**Run the container:**
+```bash
+docker run -d \
+  --name ip-collector \
+  -p 3000:8080 \
+  -v $(pwd)/data:/usr/src/app/data \
+  -e COLLECTOR_TOKEN="your-secret-token" \
+  -e STORAGE_TYPE="local" \
+  -e DISCORD_WEBHOOK_URL="https://discord.com/..." \
+  actionip-aggregator
+```
 
 ---
 
